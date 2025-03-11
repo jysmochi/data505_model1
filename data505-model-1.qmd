@@ -1,0 +1,542 @@
+---
+title: "Model 1"
+author: "Group 5"
+date: "03/10/2025"
+
+format: 
+  html:  
+    theme: superhero  
+    mainfont: monospace
+    highlight-style: github
+    title-block-banner: true
+    embed-resources: true
+---
+
+# 1. Set up
+
+```{r}
+sh <- suppressPackageStartupMessages
+sh(library(tidyverse))
+sh(library(caret))
+sh(library(naivebayes))
+sh(library(pROC))
+sh(library(thematic))
+sh(library(tidytext))
+sh(library(SnowballC)) 
+sh(library(glmnet))
+sh(library(scales))
+sh(library(EnvStats))
+data(stop_words)
+thematic_rmd(bg = "#111", fg = "#eee", accent = "#eee")
+```
+
+# 2. Reading in the Data
+
+```{r}
+wine <- readRDS(gzcon(url("https://github.com/cd-public/D505/raw/master/dat/model.rds")))
+```
+
+# 3. Bad Words
+
+```{r}
+nono_words = c("wine","pinot","drink","noir","vineyard","palate","notes","flavors","bottling", "touch")
+nono_words = wordStem(nono_words)
+```
+
+# 4. Finding Common Words: NY
+
+```{r}
+nywine = wine %>%
+  mutate(province = ifelse(province == "New_York", "NY", "not_NY"))
+
+wtxt <- nywine %>% 
+  unnest_tokens(word, description) %>% 
+  anti_join(stop_words) %>% 
+  filter(str_detect(string = word, pattern = "[a-z+]")) %>%  # get rid weird non alphas
+  filter(str_length(word)>3) %>%  # get rid of strings shorter than 3 characters
+  mutate(word = wordStem(word)) %>%
+  filter(!(word %in% nono_words)) %>%
+  group_by(word) %>% 
+  mutate(total=n()) %>% 
+  ungroup()
+
+dtxt <- wtxt %>% 
+  filter(province=="NY" | province=="not_NY") %>% 
+  filter(!(word %in% c("wine","pinot","drink","noir","vineyard","palate","notes","flavors","bottling","bottle","finish"))) %>% 
+  filter(total > 400) %>% 
+  group_by(province, word) %>%
+  count() %>% 
+  group_by(province) %>% 
+  mutate(proportion = n / sum(n)) %>% 
+  pivot_wider(id_cols = word, names_from = province, values_from = proportion) %>% 
+  mutate(diff=NY-not_NY) 
+
+nysmol_pain = wtxt %>% 
+    filter(province=="NY" | province=="not_NY") %>% 
+    filter(!(word %in% c("wine","pinot","drink","noir","vineyard","palate","notes","flavors","bottling"))) %>% 
+    filter(total > 400) %>% 
+    group_by(province, word) %>%
+    count() %>% 
+    group_by(province) %>% 
+    mutate(proportion = n / sum(n)) %>% 
+    pivot_wider(id_cols = word, names_from = province, values_from = proportion) %>% 
+    ggplot(aes(x = NY, y = not_NY, color = abs(NY - not_NY))) +
+    geom_abline(color = "gray40", lty = 2) +
+    geom_jitter(alpha = 0.1, size = 2.5, width = 0.3, height = 0.3) +
+    geom_text(aes(label = word), check_overlap = TRUE, vjust = 1.5) +
+    scale_x_log10(labels = percent_format()) +
+    scale_y_log10(labels = percent_format()) +
+    scale_color_gradient(limits = c(0, 0.001), low = "darkslategray4", high = "gray75") +
+    theme(legend.position="none") +
+    labs(x = "New York", y = "Not New York", title = "Words describing Pinot Noir from New York and Elsewhere")
+
+nypain = dtxt %>%
+  top_n(25, diff) %>%
+  mutate(word = reorder(word, diff)) %>%
+  ggplot(aes(word, diff)) +
+  geom_col() +
+  xlab(NULL) +
+  coord_flip()
+
+print(nysmol_pain)
+print(nypain)
+
+nydtxt = dtxt %>%
+  filter(diff > 0)
+nydwords = nydtxt$word
+```
+
+# 5. Finding Common Words: Burgundy
+
+```{r}
+bywine = wine %>%
+  mutate(province = ifelse(province == "Burgundy", "BY", "not_BY"))
+
+wtxt <- bywine %>% 
+  unnest_tokens(word, description) %>% 
+  anti_join(stop_words) %>% 
+  filter(str_detect(string = word, pattern = "[a-z+]")) %>%  # get rid weird non alphas
+  filter(str_length(word)>3) %>%  # get rid of strings shorter than 3 characters
+  mutate(word = wordStem(word)) %>%
+  filter(!(word %in% nono_words)) %>%
+  group_by(word) %>% 
+  mutate(total=n()) %>% 
+  ungroup()
+
+dtxt <- wtxt %>% 
+  filter(province=="BY" | province=="not_BY") %>% 
+  filter(!(word %in% c("wine","pinot","drink","noir","vineyard","palate","notes","flavors","bottling","bottle","finish"))) %>% 
+  filter(total > 400) %>% 
+  group_by(province, word) %>%
+  count() %>% 
+  group_by(province) %>% 
+  mutate(proportion = n / sum(n)) %>% 
+  pivot_wider(id_cols = word, names_from = province, values_from = proportion) %>% 
+  mutate(diff=BY-not_BY) 
+
+bysmol_pain = wtxt %>% 
+    filter(province=="BY" | province=="not_BY") %>% 
+    filter(!(word %in% c("wine","pinot","drink","noir","vineyard","palate","notes","flavors","bottling"))) %>% 
+    filter(total > 400) %>% 
+    group_by(province, word) %>%
+    count() %>% 
+    group_by(province) %>% 
+    mutate(proportion = n / sum(n)) %>% 
+    pivot_wider(id_cols = word, names_from = province, values_from = proportion) %>% 
+    ggplot(aes(x = BY, y = not_BY, color = abs(BY - not_BY))) +
+    geom_abline(color = "gray40", lty = 2) +
+    geom_jitter(alpha = 0.1, size = 2.5, width = 0.3, height = 0.3) +
+    geom_text(aes(label = word), check_overlap = TRUE, vjust = 1.5) +
+    scale_x_log10(labels = percent_format()) +
+    scale_y_log10(labels = percent_format()) +
+    scale_color_gradient(limits = c(0, 0.001), low = "darkslategray4", high = "gray75") +
+    theme(legend.position="none") +
+    labs(x = "Burgundy", y = "Not Burgundy", title = "Words describing Pinot Noir from Burgundy and Elsewhere")
+
+bypain = dtxt %>%
+  top_n(25, diff) %>%
+  mutate(word = reorder(word, diff)) %>%
+  ggplot(aes(word, diff)) +
+  geom_col() +
+  xlab(NULL) +
+  coord_flip()
+
+print(bysmol_pain)
+print(bypain)
+
+bydtxt = dtxt %>%
+  filter(diff > 0)
+bydwords = bydtxt$word
+```
+
+# 6. Finding Common Words: Marlborough
+
+```{r}
+mawine = wine %>%
+  mutate(province = ifelse(province == "Marlborough", "MA", "not_MA"))
+
+wtxt <- mawine %>% 
+  unnest_tokens(word, description) %>% 
+  anti_join(stop_words) %>% 
+  filter(str_detect(string = word, pattern = "[a-z+]")) %>%  # get rid weird non alphas
+  filter(str_length(word)>3) %>%  # get rid of strings shorter than 3 characters
+  mutate(word = wordStem(word)) %>%
+  filter(!(word %in% nono_words)) %>%
+  group_by(word) %>% 
+  mutate(total=n()) %>% 
+  ungroup()
+
+dtxt <- wtxt %>% 
+  filter(province=="MA" | province=="not_MA") %>% 
+  filter(!(word %in% c("wine","pinot","drink","noir","vineyard","palate","notes","flavors","bottling","bottle","finish"))) %>% 
+  filter(total > 400) %>% 
+  group_by(province, word) %>%
+  count() %>% 
+  group_by(province) %>% 
+  mutate(proportion = n / sum(n)) %>% 
+  pivot_wider(id_cols = word, names_from = province, values_from = proportion) %>% 
+  mutate(diff=MA-not_MA) 
+
+masmol_pain = wtxt %>% 
+    filter(province=="MA" | province=="not_MA") %>% 
+    filter(!(word %in% c("wine","pinot","drink","noir","vineyard","palate","notes","flavors","bottling"))) %>% 
+    filter(total > 400) %>% 
+    group_by(province, word) %>%
+    count() %>% 
+    group_by(province) %>% 
+    mutate(proportion = n / sum(n)) %>% 
+    pivot_wider(id_cols = word, names_from = province, values_from = proportion) %>% 
+    ggplot(aes(x = MA, y = not_MA, color = abs(MA - not_MA))) +
+    geom_abline(color = "gray40", lty = 2) +
+    geom_jitter(alpha = 0.1, size = 2.5, width = 0.3, height = 0.3) +
+    geom_text(aes(label = word), check_overlap = TRUE, vjust = 1.5) +
+    scale_x_log10(labels = percent_format()) +
+    scale_y_log10(labels = percent_format()) +
+    scale_color_gradient(limits = c(0, 0.001), low = "darkslategray4", high = "gray75") +
+    theme(legend.position="none") +
+    labs(x = "Marlborough", y = "Not Marlborough", title = "Words describing Pinot Noir from Marlborough and Elsewhere")
+
+mapain = dtxt %>%
+  top_n(25, diff) %>%
+  mutate(word = reorder(word, diff)) %>%
+  ggplot(aes(word, diff)) +
+  geom_col() +
+  xlab(NULL) +
+  coord_flip()
+
+print(masmol_pain)
+print(mapain)
+
+madtxt = dtxt %>%
+  filter(diff > 0)
+madwords = madtxt$word
+```
+
+# 7. Finding Common Words: Casablanca Valley
+
+```{r}
+cvwine = wine %>%
+  mutate(province = ifelse(province == "Casablanca_Valley", "CV", "not_CV"))
+
+wtxt <- cvwine %>% 
+  unnest_tokens(word, description) %>% 
+  anti_join(stop_words) %>% 
+  filter(str_detect(string = word, pattern = "[a-z+]")) %>%  # get rid weird non alphas
+  filter(str_length(word)>3) %>%  # get rid of strings shorter than 3 characters
+  mutate(word = wordStem(word)) %>%
+  filter(!(word %in% nono_words)) %>%
+  group_by(word) %>% 
+  mutate(total=n()) %>% 
+  ungroup()
+
+dtxt <- wtxt %>% 
+  filter(province=="CV" | province=="not_CV") %>% 
+  filter(!(word %in% c("wine","pinot","drink","noir","vineyard","palate","notes","flavors","bottling","bottle","finish"))) %>% 
+  filter(total > 400) %>% 
+  group_by(province, word) %>%
+  count() %>% 
+  group_by(province) %>% 
+  mutate(proportion = n / sum(n)) %>% 
+  pivot_wider(id_cols = word, names_from = province, values_from = proportion) %>% 
+  mutate(diff=CV-not_CV) 
+
+cvsmol_pain = wtxt %>% 
+    filter(province=="CV" | province=="not_CV") %>% 
+    filter(!(word %in% c("wine","pinot","drink","noir","vineyard","palate","notes","flavors","bottling"))) %>% 
+    filter(total > 400) %>% 
+    group_by(province, word) %>%
+    count() %>% 
+    group_by(province) %>% 
+    mutate(proportion = n / sum(n)) %>% 
+    pivot_wider(id_cols = word, names_from = province, values_from = proportion) %>% 
+    ggplot(aes(x = CV, y = not_CV, color = abs(CV - not_CV))) +
+    geom_abline(color = "gray40", lty = 2) +
+    geom_jitter(alpha = 0.1, size = 2.5, width = 0.3, height = 0.3) +
+    geom_text(aes(label = word), check_overlap = TRUE, vjust = 1.5) +
+    scale_x_log10(labels = percent_format()) +
+    scale_y_log10(labels = percent_format()) +
+    scale_color_gradient(limits = c(0, 0.001), low = "darkslategray4", high = "gray75") +
+    theme(legend.position="none") +
+    labs(x = "Casablanca Valley", y = "Not Casablanca Valley", title = "Words describing Pinot Noir from Casablanca Valley and Elsewhere")
+
+cvpain = dtxt %>%
+  top_n(25, diff) %>%
+  mutate(word = reorder(word, diff)) %>%
+  ggplot(aes(word, diff)) +
+  geom_col() +
+  xlab(NULL) +
+  coord_flip()
+
+print(cvsmol_pain)
+print(cvpain)
+
+cvdtxt = dtxt %>%
+  filter(diff > 0)
+cvdwords = cvdtxt$word
+```
+
+# 8. Finding Common Words: Oregon
+
+```{r}
+orwine = wine %>%
+  mutate(province = ifelse(province == "Oregon", "OR", "not_OR"))
+
+wtxt <- orwine %>% 
+  unnest_tokens(word, description) %>% 
+  anti_join(stop_words) %>% 
+  filter(str_detect(string = word, pattern = "[a-z+]")) %>%  # get rid weird non alphas
+  filter(str_length(word)>3) %>%  # get rid of strings shorter than 3 characters
+  mutate(word = wordStem(word)) %>%
+  filter(!(word %in% nono_words)) %>%
+  group_by(word) %>% 
+  mutate(total=n()) %>% 
+  ungroup()
+
+dtxt <- wtxt %>% 
+  filter(province=="OR" | province=="not_OR") %>% 
+  filter(!(word %in% c("wine","pinot","drink","noir","vineyard","palate","notes","flavors","bottling","bottle","finish"))) %>% 
+  filter(total > 400) %>% 
+  group_by(province, word) %>%
+  count() %>% 
+  group_by(province) %>% 
+  mutate(proportion = n / sum(n)) %>% 
+  pivot_wider(id_cols = word, names_from = province, values_from = proportion) %>% 
+  mutate(diff=OR-not_OR) 
+
+orsmol_pain = wtxt %>% 
+    filter(province=="OR" | province=="not_OR") %>% 
+    filter(!(word %in% c("wine","pinot","drink","noir","vineyard","palate","notes","flavors","bottling"))) %>% 
+    filter(total > 400) %>% 
+    group_by(province, word) %>%
+    count() %>% 
+    group_by(province) %>% 
+    mutate(proportion = n / sum(n)) %>% 
+    pivot_wider(id_cols = word, names_from = province, values_from = proportion) %>% 
+    ggplot(aes(x = OR, y = not_OR, color = abs(OR - not_OR))) +
+    geom_abline(color = "gray40", lty = 2) +
+    geom_jitter(alpha = 0.1, size = 2.5, width = 0.3, height = 0.3) +
+    geom_text(aes(label = word), check_overlap = TRUE, vjust = 1.5) +
+    scale_x_log10(labels = percent_format()) +
+    scale_y_log10(labels = percent_format()) +
+    scale_color_gradient(limits = c(0, 0.001), low = "darkslategray4", high = "gray75") +
+    theme(legend.position="none") +
+    labs(x = "Oregon", y = "Not Oregon", title = "Words describing Pinot Noir from Oregon and Elsewhere")
+
+orpain = dtxt %>%
+  top_n(25, diff) %>%
+  mutate(word = reorder(word, diff)) %>%
+  ggplot(aes(word, diff)) +
+  geom_col() +
+  xlab(NULL) +
+  coord_flip()
+
+print(orsmol_pain)
+print(orpain)
+
+ordtxt = dtxt %>%
+  filter(diff > 0)
+ordwords = ordtxt$word
+```
+
+# 9. Finding Common Words: California
+
+```{r}
+cawine = wine %>%
+  mutate(province = ifelse(province == "California", "CA", "not_CA"))
+
+wtxt <- cawine %>% 
+  unnest_tokens(word, description) %>% 
+  anti_join(stop_words) %>% 
+  filter(str_detect(string = word, pattern = "[a-z+]")) %>%  # get rid weird non alphas
+  filter(str_length(word)>3) %>%  # get rid of strings shorter than 3 characters
+  mutate(word = wordStem(word)) %>%
+  filter(!(word %in% nono_words)) %>%
+  group_by(word) %>% 
+  mutate(total=n()) %>% 
+  ungroup()
+
+dtxt <- wtxt %>% 
+  filter(province=="CA" | province=="not_CA") %>% 
+  filter(!(word %in% c("wine","pinot","drink","noir","vineyard","palate","notes","flavors","bottling","bottle","finish"))) %>% 
+  filter(total > 400) %>% 
+  group_by(province, word) %>%
+  count() %>% 
+  group_by(province) %>% 
+  mutate(proportion = n / sum(n)) %>% 
+  pivot_wider(id_cols = word, names_from = province, values_from = proportion) %>% 
+  mutate(diff=CA-not_CA) 
+
+casmol_pain = wtxt %>% 
+    filter(province=="CA" | province=="not_CA") %>% 
+    filter(!(word %in% c("wine","pinot","drink","noir","vineyard","palate","notes","flavors","bottling"))) %>% 
+    filter(total > 400) %>% 
+    group_by(province, word) %>%
+    count() %>% 
+    group_by(province) %>% 
+    mutate(proportion = n / sum(n)) %>% 
+    pivot_wider(id_cols = word, names_from = province, values_from = proportion) %>% 
+    ggplot(aes(x = CA, y = not_CA, color = abs(CA - not_CA))) +
+    geom_abline(color = "gray40", lty = 2) +
+    geom_jitter(alpha = 0.1, size = 2.5, width = 0.3, height = 0.3) +
+    geom_text(aes(label = word), check_overlap = TRUE, vjust = 1.5) +
+    scale_x_log10(labels = percent_format()) +
+    scale_y_log10(labels = percent_format()) +
+    scale_color_gradient(limits = c(0, 0.001), low = "darkslategray4", high = "gray75") +
+    theme(legend.position="none") +
+    labs(x = "California", y = "Not California", title = "Words describing Pinot Noir from California and Elsewhere")
+
+capain = dtxt %>%
+  top_n(25, diff) %>%
+  mutate(word = reorder(word, diff)) %>%
+  ggplot(aes(word, diff)) +
+  geom_col() +
+  xlab(NULL) +
+  coord_flip()
+
+print(casmol_pain)
+print(capain)
+
+cadtxt = dtxt %>%
+  filter(diff > 0)
+cadwords = cadtxt$word
+```
+
+# 10. Feature Engineering
+
+```{r}
+wine <- readRDS(gzcon(url("https://github.com/cd-public/D505/raw/master/dat/model.rds")))
+
+mywords = c(nydwords, madwords, cvdwords, bydwords, ordwords, cadwords)
+mywords = unique(mywords)
+
+mywine = wine %>%
+  rowid_to_column("id") %>%
+  unnest_tokens(word, description) %>%
+  anti_join(stop_words) %>%
+  filter(str_detect(string = word, pattern = "[a-z+]")) %>%  
+  filter(str_length(word)>3) %>%  
+  mutate(word = wordStem(word), year=as.factor(year)) %>% 
+  group_by(id) %>%
+  mutate(description = list(word)) %>%
+  select(-word) %>%
+  distinct(id, .keep_all = TRUE)
+
+dfwords = as.data.frame(matrix(data = NA, nrow = nrow(mywine), ncol = length(mywords)))
+names(dfwords) = mywords
+
+for (i in 1:nrow(mywine)) {
+  for (j in 1:length(mywords)) {
+    dfwords[i,j] = ifelse(mywords[j] %in% mywine$description[[i]], TRUE, FALSE)
+  }
+}
+
+mywine = cbind(mywine, dfwords)
+
+mywine = mywine %>%
+  select(-description) %>%
+  ungroup() %>%
+  select(-id)
+```
+
+# 11. Data Transforms
+
+```{r}
+logistic_transform = function(vec) {
+  a = min(vec) * 0.9
+  b = max(vec) * 1.1
+  veclog = log((vec-a)/(b-vec))
+  return(veclog)
+}
+
+bcf = function(vec, lambda) {
+  newvec = c()
+  for (i in 1:length(vec)) {
+    if (lambda == 0) {
+      newvec[i] = log(vec[i])
+    } else {
+      newvec[i] = (vec[i]^lambda - 1)/lambda
+    }
+  }
+  return(newvec)
+}
+
+lmywine = mywine %>% 
+  mutate(lprice = log(price)) %>%
+  select(-price) %>%
+  mutate(lpoints = log(points)) %>%
+  select(-points) %>% 
+  mutate(lprice = (lprice - mean(lprice))/sd(lprice)) %>%
+  mutate(lpoints = (lpoints - mean(lpoints))/sd(lpoints))
+
+logmywine = mywine %>%
+  mutate(logprice = logistic_transform(price)) %>%
+  mutate(logpoints = logistic_transform(points)) %>%
+  select(-price, -points) %>%
+  mutate(logprice = (logprice - mean(logprice))/sd(logprice)) %>%
+  mutate(logpoints = (logpoints - mean(logpoints))/sd(logpoints))
+
+#lambdaseq = seq(-1, 0, 0.1)
+#pdf("boxcox_price.pdf")
+#for (i in 1:length(lambdaseq)) {
+#  hist(bcf(mywine$price, lambdaseq[i]), main = paste("lambda #= ", lambdaseq[i], sep =))
+#}
+#dev.off()
+
+#lambdaseq2 = seq(0,3,.1)
+#pdf("boxcox_points.pdf")
+#for (i in 1:length(lambdaseq2)) {
+#  hist(bcf(mywine$points, lambdaseq2[i]), main = #paste("lambda = ", lambdaseq2[i], sep =))
+#}
+#dev.off()
+
+# lambda price -.35
+# lambda points 2
+
+bcmywine = mywine %>%
+  mutate(bcprice = bcf(price, -.35)) %>%
+  mutate(bcpoints = bcf(points, 2)) %>%
+  select(-price, -points) %>%
+  mutate(bcprice = (bcprice - mean(bcprice))/sd(bcprice)) %>%
+  mutate(bcpoints = (bcpoints - mean(bcpoints))/sd(bcpoints))
+```
+
+# 12. Test the Dataset
+
+```{r}
+split <- createDataPartition(lmywine$province, p = 0.8, list = FALSE)
+train <- lmywine[split, ]
+test <- lmywine[-split, ]
+fit <- train(province ~ .,
+             data = train, 
+             method = "knn",
+             tuneLength = 15,
+             metric = "Kappa",
+             trControl = trainControl(method = "cv", number = 5))
+confusionMatrix(predict(fit, test),factor(test$province))$overall['Kappa']
+```
+
+# 13. Save the .rds
+
+```{r}
+write_rds(lmywine, file="group_5_knn.rds")
+```
